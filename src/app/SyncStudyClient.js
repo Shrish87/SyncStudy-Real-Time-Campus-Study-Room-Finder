@@ -10,6 +10,9 @@ export default function SyncStudy({ initialUser }) {
   const [rooms, setRooms] = useState([]);
   const [joinedRooms, setJoinedRooms] = useState({});
   const [activeRoom, setActiveRoom] = useState(null);
+  const [creatingRoom, setCreatingRoom] = useState(false);
+  const [createRoomError, setCreateRoomError] = useState('');
+  const createRoomPending = useRef(false);
   
   // Screen Share State
   const [localScreenStream, setLocalScreenStream] = useState(null);
@@ -84,7 +87,11 @@ export default function SyncStudy({ initialUser }) {
         { event: '*', schema: 'public', table: 'study_rooms' },
         (payload) => {
           if (payload.eventType === 'INSERT') {
-            setRooms((prev) => [payload.new, ...prev]);
+            setRooms((prev) =>
+            prev.some((room) => room.id === payload.new.id)
+              ? prev
+              : [payload.new, ...prev]
+          );
           } else if (payload.eventType === 'UPDATE') {
             loadMyMemberships();
             setRooms((prev) =>
@@ -108,6 +115,56 @@ export default function SyncStudy({ initialUser }) {
       videoRef.current.srcObject = localScreenStream;
     }
   }, [localScreenStream]);
+
+  const handleCreateRoom = async (event) => {
+    event.preventDefault();
+
+    if (!user || createRoomPending.current) return;
+
+    const form = event.currentTarget;
+    const values = new FormData(form);
+
+    const room = {
+      title: String(values.get('title') || '').trim(),
+      subject: String(values.get('subject') || '').trim(),
+      location: String(values.get('location') || '').trim(),
+      description: String(values.get('description') || '').trim(),
+      created_by: user.id,
+      student_count: 0,
+    };
+
+    if (!room.title || !room.subject || !room.location) {
+      setCreateRoomError('Enter a title, subject and location.');
+      return;
+    }
+
+    createRoomPending.current = true;
+    setCreatingRoom(true);
+    setCreateRoomError('');
+
+    try {
+      const { data, error } = await supabase
+        .from('study_rooms')
+        .insert(room)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      setRooms((previous) =>
+        previous.some((existing) => existing.id === data.id)
+          ? previous
+          : [data, ...previous]
+      );
+
+      form.reset();
+    } catch (error) {
+      setCreateRoomError(error.message || 'Could not create the room.');
+    } finally {
+      createRoomPending.current = false;
+      setCreatingRoom(false);
+    }
+  };
 
   // 3. Application Logic
   const handleLogin = async () => {
@@ -276,7 +333,59 @@ export default function SyncStudy({ initialUser }) {
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-xl font-semibold">Active Study Rooms</h2>
           </div>
-          
+          <form
+            onSubmit={handleCreateRoom}
+            className="mb-6 bg-white border border-gray-200 rounded-xl p-5 shadow-sm"
+          >
+            <h3 className="text-lg font-semibold mb-4">
+              Create a study room
+            </h3>
+
+            <fieldset disabled={creatingRoom} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {[
+                  ['title', 'Room title', 'e.g. Full Stack Revision'],
+                  ['subject', 'Subject', 'e.g. Full Stack'],
+                  ['location', 'Location', 'e.g. Seminar Hall'],
+                ].map(([name, label, placeholder]) => (
+                  <label key={name} className="block text-sm font-medium text-gray-700">
+                    {label}
+                    <input
+                      name={name}
+                      placeholder={placeholder}
+                      required
+                      maxLength={100}
+                      className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </label>
+                ))}
+              </div>
+
+              <label className="block text-sm font-medium text-gray-700">
+                Description — optional
+                <textarea
+                  name="description"
+                  rows={2}
+                  maxLength={1000}
+                  placeholder="What will you study?"
+                  className="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </label>
+
+              {createRoomError && (
+                <p role="alert" className="text-sm text-red-600">
+                  {createRoomError}
+                </p>
+              )}
+
+              <button
+                type="submit"
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-5 py-2 rounded-lg disabled:opacity-50"
+              >
+                {creatingRoom ? 'Creating…' : 'Create room'}
+              </button>
+            </fieldset>
+          </form>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {rooms.map((room) => (
               <div 
